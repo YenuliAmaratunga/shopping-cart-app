@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Fingerprint } from 'lucide-react';
+import { FacebookAuthProvider, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { useAppContext } from '../context/AppContext';
 import api from '../api/axios';
 import toast from 'react-hot-toast';
+import { getFirebaseAuthClient } from '../lib/firebase';
 
 export default function Login() {
   const { login } = useAppContext();
@@ -70,6 +72,82 @@ export default function Login() {
     }
   };
 
+  const completeProviderLogin = async (provider, profile) => {
+    const response = await api.post('/auth/login', {
+      provider,
+      name: profile.name,
+      email: profile.email,
+    });
+
+    login(response.data.user, response.data.token);
+    toast.success(`Logged in with ${provider}`);
+    navigate('/');
+  };
+
+  const handleFirebaseLogin = async (providerName) => {
+    setLoading(true);
+    try {
+      const auth = getFirebaseAuthClient();
+      const provider = providerName === 'Google' ? new GoogleAuthProvider() : new FacebookAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+
+      await completeProviderLogin(providerName, {
+        name: result.user.displayName || result.user.email?.split('@')[0] || `${providerName} User`,
+        email: result.user.email,
+      });
+    } catch (error) {
+      console.error(`${providerName} login error:`, error);
+      toast.error(error.message || `${providerName} login failed`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasskeyLogin = async () => {
+    if (!window.PublicKeyCredential || !navigator.credentials) {
+      toast.error('Passkey is not supported on this browser/device');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+
+      const userHandle = new Uint8Array(16);
+      crypto.getRandomValues(userHandle);
+
+      await navigator.credentials.create({
+        publicKey: {
+          challenge,
+          rp: { name: 'FreshCart' },
+          user: {
+            id: userHandle,
+            name: formData.email?.trim() || 'passkey-user@freshcart.local',
+            displayName: formData.email?.trim() || 'Passkey User',
+          },
+          pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+          timeout: 60000,
+          attestation: 'none',
+          authenticatorSelection: {
+            residentKey: 'preferred',
+            userVerification: 'preferred',
+          },
+        },
+      });
+
+      await completeProviderLogin('Passkey', {
+        name: formData.email?.trim() || 'Passkey User',
+        email: formData.email?.trim(),
+      });
+    } catch (error) {
+      console.error('Passkey login error:', error);
+      toast.error(error.message || 'Passkey login failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleForgotPassword = async () => {
     const email = formData.email?.trim();
     if (!email) {
@@ -108,10 +186,12 @@ export default function Login() {
       });
 
       toast.success(response.data?.message || 'Password reset successful');
-      setShowResetForm(false);
-      setResetData({ newPassword: '', confirmPassword: '' });
-      setIsRegistering(false);
-      setAuthMode('user');
+      setTimeout(() => {
+        setShowResetForm(false);
+        setResetData({ newPassword: '', confirmPassword: '' });
+        setIsRegistering(false);
+        setAuthMode('user');
+      }, 600);
     } catch (error) {
       console.error('Reset password error:', error);
       toast.error(error.response?.data?.message || 'Could not reset password');
@@ -276,14 +356,14 @@ export default function Login() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <button
-                    onClick={() => handleMockLogin('Google')}
+                    onClick={() => handleFirebaseLogin('Google')}
                     disabled={loading}
                     className="w-full flex items-center justify-center px-4 py-2 border border-gray-200 rounded-xl shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-all"
                   >
                     Google
                   </button>
                   <button
-                    onClick={() => handleMockLogin('Facebook')}
+                    onClick={() => handleFirebaseLogin('Facebook')}
                     disabled={loading}
                     className="w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-xl shadow-sm text-sm font-medium text-white bg-[#1877F2] hover:bg-[#166FE5] transition-all"
                   >
@@ -292,7 +372,7 @@ export default function Login() {
                 </div>
                 
                 <button
-                  onClick={() => handleMockLogin('Passkey')}
+                  onClick={handlePasskeyLogin}
                   disabled={loading}
                   className="w-full flex items-center justify-center px-4 py-2 border border-gray-900 rounded-xl shadow-sm text-sm font-medium text-white bg-gray-900 hover:bg-gray-800 transition-all"
                 >

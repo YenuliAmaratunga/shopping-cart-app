@@ -43,17 +43,40 @@ export const loginUser = async (req, res) => {
       }
     }
 
-    // Mock OAuth Login (Google, Facebook, Passkey, Guest)
-    let user = await User.findOne({ name, provider });
-    
+    // OAuth/Passkey Login (Google, Facebook, Passkey, Guest)
+    const normalizedEmail = email ? email.toLowerCase().trim() : undefined;
+    let user = null;
+
+    if (normalizedEmail) {
+      user = await User.findOne({ email: normalizedEmail });
+    }
+
+    if (!user && name && provider) {
+      user = await User.findOne({ name, provider });
+    }
+
     if (!user) {
-      user = await User.create({ name, provider, role: 'user' });
+      user = await User.create({
+        name: name || (normalizedEmail ? normalizedEmail.split('@')[0] : 'User'),
+        email: normalizedEmail,
+        provider,
+        role: 'user'
+      });
+    } else {
+      // Keep identity info in sync for users that already exist.
+      user.name = name || user.name;
+      if (normalizedEmail && !user.email) {
+        user.email = normalizedEmail;
+      }
+      user.provider = provider || user.provider;
+      await user.save();
     }
     
     res.json({
       user: {
         id: user._id,
         name: user.name,
+        email: user.email,
         provider: user.provider,
         role: user.role
       },
